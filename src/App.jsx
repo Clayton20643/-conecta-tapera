@@ -28,6 +28,7 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [authMessage, setAuthMessage] = useState('');
   const [resetMode, setResetMode] = useState(false);
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
   const [databaseBusinesses, setDatabaseBusinesses] = useState([]);
   const [businessesLoading, setBusinessesLoading] = useState(false);
   const [businessesError, setBusinessesError] = useState('');
@@ -38,8 +39,15 @@ export default function App() {
     supabase.auth.getSession().then(({ data, error }) => {
       if (mounted && !error) setUser(data.session?.user ?? null);
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null);
+      if (event === 'PASSWORD_RECOVERY') {
+        setModal('login');
+        setResetMode(false);
+        setPasswordRecovery(true);
+        setAuthError('');
+        setAuthMessage('Defina uma nova senha para concluir a recuperação da sua conta.');
+      }
     });
     return () => {
       mounted = false;
@@ -81,6 +89,7 @@ export default function App() {
   const openAuth = (mode) => {
     setModal(mode);
     setResetMode(false);
+    setPasswordRecovery(false);
     setAuthError('');
     setAuthMessage('');
     setAuthPassword('');
@@ -115,6 +124,17 @@ export default function App() {
         });
         if (error) setAuthError(error.message);
         else setAuthMessage('Se o e-mail estiver cadastrado, você receberá as instruções para redefinir sua senha.');
+        return;
+      }
+
+      if (passwordRecovery) {
+        const { error } = await supabase.auth.updateUser({ password: authPassword });
+        if (error) setAuthError(error.message);
+        else {
+          setPasswordRecovery(false);
+          setModal('');
+          setAuthPassword('');
+        }
         return;
       }
 
@@ -208,16 +228,16 @@ export default function App() {
 
     <footer id="sobre"><div className="footer-grid"><div><a className="brand foot-brand" href="#"><span className="brand-mark"><i/><i/><i/></span><span><b>conecta<span>tapera</span></b><small>SUA CIDADE, MAIS PERTO.</small></span></a><p>Sua cidade conectada.<br/>Sua comunidade mais forte.</p></div>{[['Explore','Comércios','Serviços','Oportunidades'],['Comunidade','Cadastre seu negócio','Divulgue um evento','Fale conosco'],['Plataforma','Sobre o projeto','Privacidade','Termos de uso']].map(([h,...links])=><div className="foot-col" key={h}><b>{h}</b>{links.map(t=><a key={t} href="#sobre">{t}</a>)}</div>)}</div><div className="copyright"><span>© 2026 Conecta Tapera. Projeto em desenvolvimento.</span><span>Feito para São José da Tapera e região ♥</span></div></footer>
 
-    {modal && <div className="backdrop" onClick={()=>setModal('')}><div className="modal" onClick={e=>e.stopPropagation()}><button className="close" onClick={()=>setModal('')} aria-label="Fechar"><X/></button><span className="brand-mark"><i/><i/><i/></span><label>CONECTA TAPERA</label><h2>{resetMode?'Recuperar acesso':modal==='login'?'Que bom ter você de volta.':'Vamos conectar você à cidade.'}</h2><p>{resetMode?'Informe o e-mail da sua conta para receber as instruções de recuperação.':modal==='login'?'Entre para acessar sua conta da comunidade.':'Crie sua conta de morador para começar a participar da comunidade.'}</p>
+    {modal && <div className="backdrop" onClick={()=>setModal('')}><div className="modal" onClick={e=>e.stopPropagation()}><button className="close" onClick={()=>setModal('')} aria-label="Fechar"><X/></button><span className="brand-mark"><i/><i/><i/></span><label>CONECTA TAPERA</label><h2>{resetMode || passwordRecovery ? 'Recuperar acesso' : modal==='login'?'Que bom ter você de volta.':'Vamos conectar você à cidade.'}</h2><p>{passwordRecovery?'Escolha uma nova senha para proteger sua conta.':resetMode?'Informe o e-mail da sua conta para receber as instruções de recuperação.':modal==='login'?'Entre para acessar sua conta da comunidade.':'Crie sua conta de morador para começar a participar da comunidade.'}</p>
       {!supabase ? <div className="notice"><ShieldCheck size={19}/>A autenticação está pronta no código, mas falta configurar as chaves do seu projeto Supabase. Consulte supabase/README.md.</div> : <form className="auth-form" onSubmit={handleAuthSubmit}>
         {modal==='register' && !resetMode && <label className="field-label">Nome completo<input autoComplete="name" value={authName} onChange={e=>setAuthName(e.target.value)} required placeholder="Seu nome"/></label>}
         <label className="field-label">E-mail<input type="email" autoComplete="email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} required placeholder="voce@exemplo.com"/></label>
-        {!resetMode && <label className="field-label">Senha<input type="password" autoComplete={modal==='login'?'current-password':'new-password'} value={authPassword} onChange={e=>setAuthPassword(e.target.value)} minLength={8} required placeholder="Mínimo de 8 caracteres"/></label>}
+        {!resetMode && <label className="field-label">{passwordRecovery?'Nova senha':'Senha'}<input type="password" autoComplete={modal==='login'?'current-password':'new-password'} value={authPassword} onChange={e=>setAuthPassword(e.target.value)} minLength={8} required placeholder="Mínimo de 8 caracteres"/></label>}
         {authError && <p className="auth-error" role="alert">{authError}</p>}
         {authMessage && <p className="auth-message" role="status">{authMessage}</p>}
-        <button className="primary full" disabled={authBusy}>{authBusy?'Aguarde...':resetMode?'Enviar instruções':modal==='login'?'Entrar':'Criar minha conta'}</button>
-        {modal==='login' && !resetMode && <button type="button" className="auth-switch" onClick={()=>{setResetMode(true);setAuthError('');setAuthMessage('');}}>Esqueci minha senha</button>}
-        <button type="button" className="auth-switch" onClick={()=>{setResetMode(false);setAuthError('');setAuthMessage('');setModal(modal==='login'?'register':'login');}}>{modal==='login'?'Ainda não tem conta? Criar cadastro':'Já tem uma conta? Entrar'}</button>
+        <button className="primary full" disabled={authBusy}>{authBusy?'Aguarde...':resetMode?'Enviar instruções':passwordRecovery?'Salvar nova senha':modal==='login'?'Entrar':'Criar minha conta'}</button>
+        {modal==='login' && !resetMode && !passwordRecovery && <button type="button" className="auth-switch" onClick={()=>{setResetMode(true);setPasswordRecovery(false);setAuthError('');setAuthMessage('');}}>Esqueci minha senha</button>}
+        {!passwordRecovery && <button type="button" className="auth-switch" onClick={()=>{setResetMode(false);setPasswordRecovery(false);setAuthError('');setAuthMessage('');setModal(modal==='login'?'register':'login');}}>{modal==='login'?'Ainda não tem conta? Criar cadastro':'Já tem uma conta? Entrar'}</button>}
       </form>}
       <p className="privacy-note">Sua senha é gerenciada pelo Supabase Auth. Nunca compartilhe sua senha com ninguém.</p></div></div>}
   </div>;
