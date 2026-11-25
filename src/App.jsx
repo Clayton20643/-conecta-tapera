@@ -38,6 +38,8 @@ export default function App() {
     let mounted = true;
     supabase.auth.getSession().then(({ data, error }) => {
       if (mounted && !error) setUser(data.session?.user ?? null);
+    }).catch(() => {
+      if (mounted) setAuthError('Não foi possível verificar a sessão. Confira sua conexão.');
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null);
@@ -81,6 +83,11 @@ export default function App() {
             tone: tones[index % tones.length]
           })));
         }
+        setBusinessesLoading(false);
+      })
+      .catch(() => {
+        if (!active) return;
+        setBusinessesError('Falha de conexão ao consultar o Supabase.');
         setBusinessesLoading(false);
       });
     return () => { active = false; };
@@ -171,9 +178,13 @@ export default function App() {
 
   const handleSignOut = async () => {
     if (!supabase) return;
-    const { error } = await supabase.auth.signOut();
-    if (error) setAuthError(error.message);
-    else setUser(null);
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) setAuthError(error.message);
+      else setUser(null);
+    } catch {
+      setAuthError('Não foi possível encerrar a sessão. Tente novamente.');
+    }
   };
   const sourcePlaces = supabase ? databaseBusinesses : places;
   const results = useMemo(() => sourcePlaces.filter(p =>
