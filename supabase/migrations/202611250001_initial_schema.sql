@@ -203,10 +203,13 @@ create policy "Admins manage role assignments" on public.user_roles
   using (public.has_role(auth.uid(), 'admin'))
   with check (public.has_role(auth.uid(), 'admin'));
 
-create policy "Approved businesses are public; owners and admins can view others"
-  on public.businesses for select to anon, authenticated
+create policy "Public sees approved businesses"
+  on public.businesses for select to anon
+  using (status = 'approved');
+create policy "Authenticated sees approved, own, and admin-visible businesses"
+  on public.businesses for select to authenticated
   using (status = 'approved' or owner_id = auth.uid()
-    or (auth.uid() is not null and public.has_role(auth.uid(), 'admin')));
+    or public.has_role(auth.uid(), 'admin'));
 create policy "Owners submit businesses for review" on public.businesses
   for insert to authenticated
   with check (owner_id = auth.uid() and status in ('draft', 'pending'));
@@ -220,14 +223,18 @@ create policy "Admins fully manage businesses" on public.businesses
   using (public.has_role(auth.uid(), 'admin'))
   with check (public.has_role(auth.uid(), 'admin'));
 
-create policy "Services are visible for approved businesses" on public.business_services
-  for select to anon, authenticated
+create policy "Public sees active services of approved businesses" on public.business_services
+  for select to anon
+  using (is_active and exists (select 1 from public.businesses b
+    where b.id = business_id and b.status = 'approved'));
+create policy "Authenticated sees approved and own business services" on public.business_services
+  for select to authenticated
   using (
     (is_active and exists (select 1 from public.businesses b
       where b.id = business_id and b.status = 'approved'))
     or exists (select 1 from public.businesses b
       where b.id = business_id and b.owner_id = auth.uid())
-    or (auth.uid() is not null and public.has_role(auth.uid(), 'admin'))
+    or public.has_role(auth.uid(), 'admin')
   );
 create policy "Business owners manage their services" on public.business_services
   for all to authenticated
@@ -267,10 +274,12 @@ create policy "Editors and admins manage community posts" on public.community_po
 create policy "Users manage their own favorites" on public.favorites
   for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 
-create policy "Visible reviews and own reviews can be read" on public.reviews
-  for select to anon, authenticated
+create policy "Public sees visible reviews" on public.reviews
+  for select to anon using (status = 'visible');
+create policy "Authenticated sees visible and own reviews" on public.reviews
+  for select to authenticated
   using (status = 'visible' or user_id = auth.uid()
-    or (auth.uid() is not null and public.has_role(auth.uid(), 'admin')));
+    or public.has_role(auth.uid(), 'admin'));
 create policy "Authenticated users submit pending reviews" on public.reviews
   for insert to authenticated with check (user_id = auth.uid() and status = 'pending');
 create policy "Users delete their pending reviews" on public.reviews
@@ -282,8 +291,9 @@ create policy "Admins moderate reviews" on public.reviews
 
 grant usage on schema public to anon, authenticated;
 grant select on public.municipalities to anon, authenticated;
-grant select, update on public.profiles to authenticated;
-revoke insert, delete on public.profiles from anon, authenticated;
+grant insert, update, delete on public.municipalities to authenticated;
+revoke all on public.profiles from anon, authenticated;
+grant select on public.profiles to authenticated;
 grant update (full_name, municipality_id) on public.profiles to authenticated;
 grant select, insert, update, delete on public.user_roles to authenticated;
 grant select on public.businesses to anon, authenticated;
@@ -295,6 +305,6 @@ grant insert, update, delete on public.job_posts to authenticated;
 grant select on public.community_posts to anon, authenticated;
 grant insert, update, delete on public.community_posts to authenticated;
 grant select, insert, delete on public.favorites to authenticated;
-grant select, insert, delete on public.reviews to authenticated;
+grant select, insert, update, delete on public.reviews to authenticated;
 
 -- Novas contas recebem o papel resident. Conceda admin manualmente no SQL Editor.
