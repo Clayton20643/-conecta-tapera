@@ -28,6 +28,9 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [authMessage, setAuthMessage] = useState('');
   const [resetMode, setResetMode] = useState(false);
+  const [databaseBusinesses, setDatabaseBusinesses] = useState([]);
+  const [businessesLoading, setBusinessesLoading] = useState(false);
+  const [businessesError, setBusinessesError] = useState('');
 
   useEffect(() => {
     if (!supabase) return undefined;
@@ -42,6 +45,37 @@ export default function App() {
       mounted = false;
       subscription.unsubscribe();
     };
+  }, []);
+
+  useEffect(() => {
+    if (!supabase) return undefined;
+    let active = true;
+    setBusinessesLoading(true);
+    supabase
+      .from('businesses')
+      .select('id, name, category, description, address, neighborhood, municipalities(name, state_code)')
+      .eq('status', 'approved')
+      .order('created_at', { ascending: false })
+      .limit(20)
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) {
+          setBusinessesError('Não foi possível carregar os estabelecimentos. Confirme se a migration do Supabase foi executada.');
+        } else {
+          const tones = ['green', 'pink', 'blue', 'yellow'];
+          setDatabaseBusinesses((data ?? []).map((item, index) => ({
+            id: item.id,
+            name: item.name,
+            type: item.category,
+            category: categories.some(c => c.name === item.category) ? item.category : 'Outros',
+            location: [item.neighborhood, item.address, item.municipalities?.name].filter(Boolean).join(' • ') || 'Alagoas',
+            initials: item.name.slice(0, 2).toUpperCase(),
+            tone: tones[index % tones.length]
+          })));
+        }
+        setBusinessesLoading(false);
+      });
+    return () => { active = false; };
   }, []);
 
   const openAuth = (mode) => {
@@ -64,44 +98,54 @@ export default function App() {
       setAuthError('Informe seu e-mail.');
       return;
     }
-    if (resetMode) {
-      setAuthBusy(true);
-      const { error } = await supabase.auth.resetPasswordForEmail(authEmail.trim(), {
-        redirectTo: window.location.origin
-      });
-      setAuthBusy(false);
-      if (error) setAuthError(error.message);
-      else setAuthMessage('Se o e-mail estiver cadastrado, você receberá as instruções para redefinir sua senha.');
-      return;
-    }
-    if (authPassword.length < 8) {
+    if (!resetMode && authPassword.length < 8) {
       setAuthError('A senha deve ter pelo menos 8 caracteres.');
       return;
     }
-    setAuthBusy(true);
-    const result = modal === 'register'
-      ? await supabase.auth.signUp({
-          email: authEmail.trim(),
-          password: authPassword,
-          options: {
-            data: { full_name: authName.trim() },
-            emailRedirectTo: window.location.origin
-          }
-        })
-      : await supabase.auth.signInWithPassword({
-          email: authEmail.trim(),
-          password: authPassword
-        });
-    setAuthBusy(false);
-    if (result.error) {
-      setAuthError(result.error.message);
+    if (modal === 'register' && !resetMode && !authName.trim()) {
+      setAuthError('Informe seu nome completo.');
       return;
     }
-    if (result.data.session) {
-      setModal('');
-      setAuthPassword('');
-    } else {
-      setAuthMessage('Cadastro recebido. Verifique seu e-mail para confirmar a conta antes de entrar.');
+
+    setAuthBusy(true);
+    try {
+      if (resetMode) {
+        const { error } = await supabase.auth.resetPasswordForEmail(authEmail.trim(), {
+          redirectTo: window.location.origin
+        });
+        if (error) setAuthError(error.message);
+        else setAuthMessage('Se o e-mail estiver cadastrado, você receberá as instruções para redefinir sua senha.');
+        return;
+      }
+
+      const result = modal === 'register'
+        ? await supabase.auth.signUp({
+            email: authEmail.trim(),
+            password: authPassword,
+            options: {
+              data: { full_name: authName.trim() },
+              emailRedirectTo: window.location.origin
+            }
+          })
+        : await supabase.auth.signInWithPassword({
+            email: authEmail.trim(),
+            password: authPassword
+          });
+
+      if (result.error) {
+        setAuthError(result.error.message);
+        return;
+      }
+      if (result.data.session) {
+        setModal('');
+        setAuthPassword('');
+      } else {
+        setAuthMessage('Cadastro recebido. Verifique seu e-mail para confirmar a conta antes de entrar.');
+      }
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Não foi possível concluir a solicitação. Tente novamente.');
+    } finally {
+      setAuthBusy(false);
     }
   };
 
@@ -111,10 +155,11 @@ export default function App() {
     if (error) setAuthError(error.message);
     else setUser(null);
   };
-  const results = useMemo(() => places.filter(p =>
+  const sourcePlaces = supabase ? databaseBusinesses : places;
+  const results = useMemo(() => sourcePlaces.filter(p =>
     (category === 'Todos' || p.category === category) &&
     (p.name + ' ' + p.type + ' ' + p.location).toLocaleLowerCase('pt-BR').includes(query.toLocaleLowerCase('pt-BR'))
-  ), [query, category]);
+  ), [query, category, sourcePlaces]);
   const toggleFavorite = name => setFavorites(old => old.includes(name) ? old.filter(x => x !== name) : [...old, name]);
 
   return <div className="app">
@@ -152,8 +197,8 @@ export default function App() {
       <section className="section discover" id="explorar">
         <div className="heading"><div><label>DESCUBRA PERTO DE VOCÊ</label><h2>Conheça quem faz<br/><em>a cidade acontecer.</em></h2></div><button className="reset" onClick={()=>setCategory('Todos')}>{category==='Todos'?'Todas as categorias':category}⌄</button></div>
         <div className="filters"><button className={category==='Todos'?'active':''} onClick={()=>setCategory('Todos')}>Todos</button>{categories.slice(0,2).map(c=><button className={category===c.name?'active':''} key={c.name} onClick={()=>setCategory(c.name)}>{c.name}</button>)}</div>
-        {results.length ? <div className="cards">{results.map(p=><article className="place-card" key={p.name}><div className={'cover '+p.tone}><span className="tag">Destaque local</span><button aria-label="Favoritar" className={favorites.includes(p.name)?'favorite selected':'favorite'} onClick={()=>toggleFavorite(p.name)}><Heart size={18} fill={favorites.includes(p.name)?'currentColor':'none'}/></button><b>{p.initials}</b></div><div className="place-info"><small>{p.type}</small><h3>{p.name}</h3><p><MapPin size={13}/>{p.location}</p><button className="detail" onClick={()=>openAuth('login')}>Ver detalhes <ArrowRight size={15}/></button></div></article>)}</div> : <div className="empty"><Search/><b>Nenhum resultado encontrado</b><span>Tente outro termo ou escolha uma categoria diferente.</span><button onClick={()=>{setQuery('');setCategory('Todos');}}>Limpar busca</button></div>}
-        <p className="demo">Prévia visual com estabelecimentos ilustrativos. Cadastros reais serão exibidos após a implantação do banco de dados e da moderação.</p>
+        {results.length ? <div className="cards">{results.map(p=><article className="place-card" key={p.id || p.name}><div className={'cover '+p.tone}><span className="tag">Destaque local</span><button aria-label="Favoritar" className={favorites.includes(p.name)?'favorite selected':'favorite'} onClick={()=>toggleFavorite(p.name)}><Heart size={18} fill={favorites.includes(p.name)?'currentColor':'none'}/></button><b>{p.initials}</b></div><div className="place-info"><small>{p.type}</small><h3>{p.name}</h3><p><MapPin size={13}/>{p.location}</p><button className="detail" onClick={()=>openAuth('login')}>Ver detalhes <ArrowRight size={15}/></button></div></article>)}</div> : <div className="empty"><Search/><b>Nenhum resultado encontrado</b><span>Tente outro termo ou escolha uma categoria diferente.</span><button onClick={()=>{setQuery('');setCategory('Todos');}}>Limpar busca</button></div>}
+        <p className="demo">{!supabase ? 'Prévia com estabelecimentos ilustrativos. Os dados de demonstração não representam cadastros reais.' : businessesLoading ? 'Carregando estabelecimentos aprovados...' : businessesError || (databaseBusinesses.length ? 'Estabelecimentos cadastrados e aprovados na plataforma.' : 'Ainda não há estabelecimentos aprovados para exibir nesta região.')}</p>
       </section>
 
       <section className="community" id="comunidade"><span className="community-icon"><Users size={29}/></span><div><label>A CIDADE É FEITA POR VOCÊ</label><h2>Tem um negócio ou serviço?<br/><em>Seu lugar é aqui.</em></h2><p>Faça parte da rede que fortalece a economia e aproxima as pessoas da nossa região.</p></div><button onClick={()=>openAuth('register')}>Quero participar <ArrowRight size={16}/></button></section>
