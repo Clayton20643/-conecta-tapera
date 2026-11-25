@@ -32,6 +32,20 @@ export default function App() {
   const [databaseBusinesses, setDatabaseBusinesses] = useState([]);
   const [businessesLoading, setBusinessesLoading] = useState(false);
   const [businessesError, setBusinessesError] = useState('');
+  const [userRole, setUserRole] = useState(null);
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [adminTab, setAdminTab] = useState('overview');
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminError, setAdminError] = useState('');
+  const [adminMessage, setAdminMessage] = useState('');
+  const [pendingBusinesses, setPendingBusinesses] = useState([]);
+  const [communityPosts, setCommunityPosts] = useState([]);
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [postTitle, setPostTitle] = useState('');
+  const [postBody, setPostBody] = useState('');
+  const [postType, setPostType] = useState('news');
+  const [postStatus, setPostStatus] = useState('draft');
+  const [postSaving, setPostSaving] = useState(false);
 
   useEffect(() => {
     if (!supabase) return undefined;
@@ -92,6 +106,159 @@ export default function App() {
       });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    if (!supabase || !user) {
+      setUserRole(null);
+      setAdminOpen(false);
+      return undefined;
+    }
+    let active = true;
+    supabase
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', user.id)
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) {
+          setUserRole(null);
+          setAdminError('Não foi possível verificar suas permissões. Entre novamente ou procure o administrador.');
+          return;
+        }
+        const roles = (data ?? []).map(item => item.role);
+        setUserRole(roles.includes('admin') ? 'admin' : roles.includes('editor') ? 'editor' : 'resident');
+      })
+      .catch(() => {
+        if (active) setUserRole(null);
+      });
+    return () => { active = false; };
+  }, [user]);
+
+  const loadAdminData = async () => {
+    if (!supabase || !user || !['admin', 'editor'].includes(userRole)) return;
+    setAdminLoading(true);
+    setAdminError('');
+    const [businessResult, postResult, rolesResult, profilesResult] = await Promise.all([
+      userRole === 'admin'
+        ? supabase.from('businesses')
+            .select('id, name, category, description, address, neighborhood, status, created_at')
+            .in('status', ['pending', 'rejected'])
+            .order('created_at', { ascending: false })
+            .limit(100)
+        : Promise.resolve({ data: [], error: null }),
+      supabase.from('community_posts')
+        .select('id, title, body, post_type, status, published_at, created_at')
+        .order('created_at', { ascending: false })
+        .limit(100),
+      userRole === 'admin'
+        ? supabase.from('user_roles').select('user_id, role, assigned_at').order('assigned_at', { ascending: false }).limit(200)
+        : Promise.resolve({ data: [], error: null }),
+      userRole === 'admin'
+        ? supabase.from('profiles').select('id, full_name, created_at').order('created_at', { ascending: false }).limit(200)
+        : Promise.resolve({ data: [], error: null })
+    ]);
+    if (businessResult.error || postResult.error || rolesResult.error || profilesResult.error) {
+      setAdminError('Alguns dados não puderam ser carregados. Verifique suas permissões de administrador/editor e as políticas do banco.');
+    } else {
+      setPendingBusinesses(businessResult.data ?? []);
+      setCommunityPosts(postResult.data ?? []);
+      const roles = rolesResult.data ?? [];
+      const profiles = profilesResult.data ?? [];
+      setAdminUsers(profiles.map(profile => ({
+        ...profile,
+        roles: roles.filter(role => role.user_id === profile.id).map(role => role.role)
+      })));
+    }
+    setAdminLoading(false);
+  };
+
+  useEffect(() => {
+    if (adminOpen) loadAdminData();
+  }, [adminOpen, userRole, user]);
+
+  const moderateBusiness = async (businessId, status) => {
+    if (!supabase || userRole !== 'admin') return;
+    setAdminError('');
+    setAdminMessage('');
+    const { error } = await supabase.from('businesses').update({ status }).eq('id', businessId);
+    if (error) {
+      setAdminError('Não foi possível atualizar o estabelecimento. Verifique suas permissões.');
+      return;
+    }
+    setAdminMessage(status === 'approved' ? 'Estabelecimento aprovado.' : 'Estabelecimento recusado.');
+    await loadAdminData();
+  };
+
+  const saveCommunityPost = async (event) => {
+    event.preventDefault();
+    if (!supabase || !user || !['admin', 'editor'].includes(userRole)) return;
+    if (postTitle.trim().length < 3 || postBody.trim().length < 5) {
+      setAdminError('Informe um título e um conteúdo válidos.');
+      return;
+    }
+    setPostSaving(true);
+    setAdminError('');
+    setAdminMessage('');
+    try {
+      const { data: municipality, error: municipalityError } = await supabase
+        .from('municipalities')
+        .select('id')
+        .eq('name', 'São José da Tapera')
+        .eq('state_code', 'AL')
+        .maybeSingle();
+      if (municipalityError) throw municipalityError;
+      const payload = {
+        author_id: user.id,
+        municipality_id: municipality?.id ?? null,
+        post_type: postType,
+        title: postTitle.trim(),
+        body: postBody.trim(),
+        status: postStatus,
+        published_at: postStatus === 'published' ? new Date().toISOString() : null
+      };
+      const { error } = await supabase.from('community_posts').insert(payload);
+      if (error) throw error;
+      setPostTitle('');
+      setPostBody('');
+      setPostType('news');
+      setPostStatus('draft');
+      setAdminMessage(postStatus === 'published' ? 'Publicação criada e publicada.' : 'Rascunho salvo.');
+      await loadAdminData();
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Não foi possível salvar a publicação.');
+    } finally {
+      setPostSaving(false);
+    }
+  };
+
+  const changePostStatus = async (postId, status) => {
+    if (!supabase || !['admin', 'editor'].includes(userRole)) return;
+    setAdminError('');
+    const updates = {
+      status,
+      published_at: status === 'published' ? new Date().toISOString() : null
+    };
+    const { error } = await supabase.from('community_posts').update(updates).eq('id', postId);
+    if (error) {
+      setAdminError('Não foi possível alterar o status desta publicação.');
+      return;
+    }
+    setAdminMessage(status === 'published' ? 'Publicação publicada.' : status === 'archived' ? 'Publicação arquivada.' : 'Publicação salva como rascunho.');
+    await loadAdminData();
+  };
+
+  const deletePost = async (postId) => {
+    if (!supabase || !['admin', 'editor'].includes(userRole)) return;
+    if (!window.confirm('Tem certeza de que deseja excluir esta publicação?')) return;
+    setAdminError('');
+    const { error } = await supabase.from('community_posts').delete().eq('id', postId);
+    if (error) {
+      setAdminError('Não foi possível excluir esta publicação.');
+      return;
+    }
+    setAdminMessage('Publicação excluída.');
+    await loadAdminData();
+  };
 
   const openAuth = (mode) => {
     setModal(mode);
@@ -198,10 +365,67 @@ export default function App() {
       <a className="brand" href="#"><span className="brand-mark"><i/><i/><i/></span><span><b>conecta<span>tapera</span></b><small>SUA CIDADE, MAIS PERTO.</small></span></a>
       <button className="mobile-menu" onClick={() => setMenuOpen(!menuOpen)} aria-label="Menu">{menuOpen ? <X/> : <Menu/>}</button>
       <nav className={menuOpen ? 'nav open' : 'nav'}>{[['Explorar','#explorar'],['Categorias','#categorias'],['Comunidade','#comunidade'],['Sobre','#sobre']].map(([t,h])=><a key={t} href={h} onClick={()=>setMenuOpen(false)}>{t}</a>)}</nav>
-      <div className="actions"><button className="bell" aria-label="Notificações"><Bell size={19}/></button>{user ? <><span className="signed-user">{user.user_metadata?.full_name || user.email}</span><button className="login" onClick={handleSignOut}>Sair</button></> : <><button className="login" onClick={()=>openAuth('login')}>Entrar</button><button className="primary compact" onClick={()=>openAuth('register')}>Criar conta <ArrowRight size={15}/></button></>}</div>
+      <div className="actions"><button className="bell" aria-label="Notificações"><Bell size={19}/></button>{user ? <>{['admin','editor'].includes(userRole) && <button className="admin-link" onClick={()=>{setAdminOpen(!adminOpen);setMenuOpen(false);}}>{adminOpen?'Voltar ao site':'Painel'}</button>}<span className="signed-user">{user.user_metadata?.full_name || user.email}</span><button className="login" onClick={handleSignOut}>Sair</button></> : <><button className="login" onClick={()=>openAuth('login')}>Entrar</button><button className="primary compact" onClick={()=>openAuth('register')}>Criar conta <ArrowRight size={15}/></button></>}</div>
     </header>
 
-    <main>
+    {adminOpen ? <main className="admin-shell">
+      <section className="admin-hero">
+        <div><span className="eyebrow"><ShieldCheck size={15}/> ÁREA RESTRITA</span><h1>Painel de <em>gestão.</em></h1><p>Gerencie os estabelecimentos e as publicações da comunidade.</p></div>
+        <span className="admin-role">{userRole==='admin'?'Administrador':'Editor'}</span>
+      </section>
+      <section className="admin-content">
+        <div className="admin-tabs">
+          <button className={adminTab==='overview'?'selected':''} onClick={()=>setAdminTab('overview')}>Visão geral</button>
+          {userRole==='admin' && <button className={adminTab==='businesses'?'selected':''} onClick={()=>setAdminTab('businesses')}>Estabelecimentos</button>}
+          <button className={adminTab==='content'?'selected':''} onClick={()=>setAdminTab('content')}>Publicações</button>
+          {userRole==='admin' && <button className={adminTab==='users'?'selected':''} onClick={()=>setAdminTab('users')}>Usuários</button>}
+        </div>
+        {adminError && <p className="admin-alert error" role="alert">{adminError}</p>}
+        {adminMessage && <p className="admin-alert success" role="status">{adminMessage}</p>}
+        {adminLoading ? <div className="admin-loading">Carregando dados do painel...</div> : <>
+          {adminTab==='overview' && <div className="admin-overview">
+            <div className="admin-stats">
+              <article><span>Estabelecimentos pendentes</span><strong>{pendingBusinesses.filter(b=>b.status==='pending').length}</strong></article>
+              <article><span>Publicações</span><strong>{communityPosts.length}</strong></article>
+              <article><span>Usuários cadastrados</span><strong>{userRole==='admin'?adminUsers.length:'—'}</strong></article>
+            </div>
+            <div className="admin-panel-card"><h2>Atalhos de gestão</h2><div className="admin-actions-grid">
+              {userRole==='admin' && <button onClick={()=>setAdminTab('businesses')}><Building2/>Analisar cadastros de empresas</button>}
+              <button onClick={()=>setAdminTab('content')}><Newspaper/>Criar notícia ou evento</button>
+              {userRole==='admin' && <button onClick={()=>setAdminTab('users')}><Users/>Consultar usuários e perfis</button>}
+            </div></div>
+          </div>}
+          {adminTab==='businesses' && userRole==='admin' && <div className="admin-panel-card">
+            <div className="admin-section-head"><div><h2>Estabelecimentos para análise</h2><p>Aprove ou recuse cadastros enviados pelos proprietários.</p></div><button className="admin-refresh" onClick={loadAdminData}>Atualizar</button></div>
+            {pendingBusinesses.length===0 ? <p className="admin-empty">Nenhum cadastro pendente ou recusado neste momento.</p> : <div className="admin-list">
+              {pendingBusinesses.map(b=><article className="admin-row" key={b.id}><div className="admin-row-main"><strong>{b.name}</strong><span>{b.category} · {b.neighborhood || b.address || 'São José da Tapera'}</span><small>{b.status==='pending'?'Aguardando análise':'Recusado anteriormente'}</small></div><div className="admin-row-actions"><button className="approve" onClick={()=>moderateBusiness(b.id,'approved')}>Aprovar</button><button className="reject" onClick={()=>moderateBusiness(b.id,'rejected')}>Recusar</button></div></article>)}
+            </div>}
+          </div>}
+          {adminTab==='content' && <div className="admin-content-grid">
+            <form className="admin-panel-card admin-form" onSubmit={saveCommunityPost}>
+              <h2>Nova publicação</h2>
+              <label>Título<input value={postTitle} onChange={e=>setPostTitle(e.target.value)} required minLength={3} maxLength={180} placeholder="Ex.: Mutirão comunitário no sábado"/></label>
+              <label>Tipo<select value={postType} onChange={e=>setPostType(e.target.value)}><option value="news">Notícia</option><option value="event">Evento</option><option value="announcement">Comunicado</option></select></label>
+              <label>Conteúdo<textarea value={postBody} onChange={e=>setPostBody(e.target.value)} required minLength={5} rows={5} placeholder="Escreva as informações da publicação..."/></label>
+              <label>Publicação<select value={postStatus} onChange={e=>setPostStatus(e.target.value)}><option value="draft">Salvar como rascunho</option><option value="published">Publicar agora</option></select></label>
+              <button className="primary" disabled={postSaving}>{postSaving?'Salvando...':'Salvar publicação'}</button>
+            </form>
+            <div className="admin-panel-card"><div className="admin-section-head"><div><h2>Conteúdo recente</h2><p>Notícias, eventos e comunicados registrados no banco.</p></div><button className="admin-refresh" onClick={loadAdminData}>Atualizar</button></div>
+              {communityPosts.length===0 ? <p className="admin-empty">Nenhuma publicação cadastrada.</p> : <div className="admin-list">
+                {communityPosts.map(p=><article className="admin-row" key={p.id}><div className="admin-row-main"><strong>{p.title}</strong><span>{p.post_type==='event'?'Evento':p.post_type==='announcement'?'Comunicado':'Notícia'} · {p.status==='published'?'Publicado':p.status==='archived'?'Arquivado':'Rascunho'}</span><small>{new Date(p.created_at).toLocaleDateString('pt-BR')}</small></div><div className="admin-row-actions">{p.status==='published'?<button className="admin-secondary" onClick={()=>changePostStatus(p.id,'draft')}>Rascunho</button>:<button className="approve" onClick={()=>changePostStatus(p.id,'published')}>Publicar</button>}<button className="reject" onClick={()=>deletePost(p.id)}>Excluir</button></div></article>)}
+              </div>}
+            </div>
+          </div>}
+          {adminTab==='users' && userRole==='admin' && <div className="admin-panel-card">
+            <div className="admin-section-head"><div><h2>Usuários e permissões</h2><p>Contas registradas e seus papéis de acesso.</p></div><button className="admin-refresh" onClick={loadAdminData}>Atualizar</button></div>
+            {adminUsers.length===0 ? <p className="admin-empty">Ainda não há contas cadastradas.</p> : <div className="admin-list">
+              {adminUsers.map(person=><article className="admin-row" key={person.id}><div className="admin-row-main"><strong>{person.full_name || 'Morador sem nome informado'}</strong><span>ID da conta: {person.id}</span><small>Papel: {person.roles.length?person.roles.join(', '):'sem papel atribuído'}</small></div></article>)}
+            </div>}
+            <p className="admin-footnote">A alteração de papéis administrativos exige uma ação controlada pelo responsável do projeto. Novas contas recebem automaticamente o papel de morador.</p>
+          </div>}
+        </>}
+      </section>
+    </main> : <main>
       <section className="hero">
         <div className="hero-content">
           <span className="eyebrow"><Sparkles size={15}/> A CONEXÃO QUE A NOSSA TERRA MERECE</span>
