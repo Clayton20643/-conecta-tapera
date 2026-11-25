@@ -4,9 +4,9 @@ O projeto Supabase existente já foi conectado e a estrutura inicial do banco fo
 
 ## Estado atual
 - Projeto Supabase: ativo, região São Paulo (sa-east-1).
-- Banco PostgreSQL: migration inicial aplicada.
+- Banco PostgreSQL: migration inicial e migration de reforço de segurança/índices aplicadas.
 - Tabelas: municípios, perfis, papéis, empresas, serviços, vagas, publicações, favoritos e avaliações.
-- Segurança: RLS ativado nas nove tabelas públicas.
+- Segurança: RLS ativado nas nove tabelas públicas; o verificador de segurança não apresenta alertas.
 - O município São José da Tapera–AL já está cadastrado.
 - Cadastro, login, encerramento de sessão e recuperação de senha estão integrados ao frontend.
 - A listagem pública do site consulta empresas aprovadas no banco de dados.
@@ -22,6 +22,8 @@ O projeto Supabase existente já foi conectado e a estrutura inicial do banco fo
    npm run dev
    ```
 6. Abra no navegador o endereço local exibido pelo Vite (normalmente `http://localhost:5173`).
+
+O GitHub Actions já executou a etapa de compilação do frontend com sucesso.
 
 No Windows PowerShell, a cópia pode ser feita com:
 ```powershell
