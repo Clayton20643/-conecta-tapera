@@ -35,24 +35,33 @@ create table public.user_roles (
   unique (user_id, role)
 );
 
-create or replace function public.has_role(_user_id uuid, _role public.app_role)
-returns boolean
-language sql stable security definer
-set search_path = ''
-as $
-  select exists (
-    select 1 from public.user_roles
-    where user_id = _user_id and role = _role
-  );
-$$;
-revoke all on function public.has_role(uuid, public.app_role) from public, anon;
-grant execute on function public.has_role(uuid, public.app_role) to authenticated;
+create schema if not exists private;
 
-create or replace function public.handle_new_user()
-returns trigger
-language plpgsql security definer
+create or replace function private.has_role(_user_id uuid, _role public.app_role)
+returns boolean
+language sql
+stable
+security definer
 set search_path = ''
-as $
+as $body$
+  select exists (
+    select 1
+    from public.user_roles
+    where user_id = _user_id
+      and user_id = (select auth.uid())
+      and role = _role
+  );
+$body$;
+revoke all on function private.has_role(uuid, public.app_role) from public, anon, authenticated;
+grant usage on schema private to authenticated;
+grant execute on function private.has_role(uuid, public.app_role) to authenticated;
+
+create or replace function private.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $body$
 begin
   insert into public.profiles (id, full_name)
   values (new.id, coalesce(new.raw_user_meta_data ->> 'full_name', ''))
@@ -62,22 +71,24 @@ begin
   on conflict (user_id, role) do nothing;
   return new;
 end;
-$$;
+$body$;
 
 create trigger on_auth_user_created
   after insert on auth.users
-  for each row execute procedure public.handle_new_user();
+  for each row execute procedure private.handle_new_user();
+revoke all on function private.handle_new_user() from public, anon, authenticated;
 
-create or replace function public.set_updated_at()
+create or replace function private.set_updated_at()
 returns trigger
 language plpgsql
 set search_path = ''
-as $
+as $body$
 begin
   new.updated_at = now();
   return new;
 end;
-$$;
+$body$;
+revoke all on function private.set_updated_at() from public, anon, authenticated;
 
 create table public.businesses (
   id uuid primary key default gen_random_uuid(),
@@ -98,7 +109,7 @@ create table public.businesses (
 create index businesses_public_search_idx on public.businesses (municipality_id, category, status);
 create index businesses_owner_idx on public.businesses (owner_id);
 create trigger businesses_set_updated_at before update on public.businesses
-  for each row execute procedure public.set_updated_at();
+  for each row execute procedure private.set_updated_at();
 
 create table public.business_services (
   id uuid primary key default gen_random_uuid(),
@@ -112,7 +123,7 @@ create table public.business_services (
 );
 create index business_services_business_idx on public.business_services (business_id);
 create trigger business_services_set_updated_at before update on public.business_services
-  for each row execute procedure public.set_updated_at();
+  for each row execute procedure private.set_updated_at();
 
 create table public.job_posts (
   id uuid primary key default gen_random_uuid(),
@@ -127,7 +138,7 @@ create table public.job_posts (
 );
 create index job_posts_status_idx on public.job_posts (status, expires_at);
 create trigger job_posts_set_updated_at before update on public.job_posts
-  for each row execute procedure public.set_updated_at();
+  for each row execute procedure private.set_updated_at();
 
 create table public.community_posts (
   id uuid primary key default gen_random_uuid(),
@@ -147,7 +158,7 @@ create table public.community_posts (
 create index community_posts_public_idx
   on public.community_posts (municipality_id, post_type, status, published_at desc);
 create trigger community_posts_set_updated_at before update on public.community_posts
-  for each row execute procedure public.set_updated_at();
+  for each row execute procedure private.set_updated_at();
 
 create table public.favorites (
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -182,26 +193,26 @@ create policy "Active municipalities are public" on public.municipalities
   for select to anon, authenticated using (is_active);
 create policy "Admins manage municipalities" on public.municipalities
   for all to authenticated
-  using (public.has_role(auth.uid(), 'admin'))
-  with check (public.has_role(auth.uid(), 'admin'));
+  using (private.has_role(auth.uid(), 'admin'))
+  with check (private.has_role(auth.uid(), 'admin'));
 
 create policy "Users read their own profile" on public.profiles
   for select to authenticated
-  using (id = auth.uid() or public.has_role(auth.uid(), 'admin'));
+  using (id = auth.uid() or private.has_role(auth.uid(), 'admin'));
 create policy "Users update their own profile" on public.profiles
   for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
 create policy "Admins manage profiles" on public.profiles
   for all to authenticated
-  using (public.has_role(auth.uid(), 'admin'))
-  with check (public.has_role(auth.uid(), 'admin'));
+  using (private.has_role(auth.uid(), 'admin'))
+  with check (private.has_role(auth.uid(), 'admin'));
 
 create policy "Users read their own role assignments" on public.user_roles
   for select to authenticated
-  using (user_id = auth.uid() or public.has_role(auth.uid(), 'admin'));
+  using (user_id = auth.uid() or private.has_role(auth.uid(), 'admin'));
 create policy "Admins manage role assignments" on public.user_roles
   for all to authenticated
-  using (public.has_role(auth.uid(), 'admin'))
-  with check (public.has_role(auth.uid(), 'admin'));
+  using (private.has_role(auth.uid(), 'admin'))
+  with check (private.has_role(auth.uid(), 'admin'));
 
 create policy "Public sees approved businesses"
   on public.businesses for select to anon
@@ -209,7 +220,7 @@ create policy "Public sees approved businesses"
 create policy "Authenticated sees approved, own, and admin-visible businesses"
   on public.businesses for select to authenticated
   using (status = 'approved' or owner_id = auth.uid()
-    or public.has_role(auth.uid(), 'admin'));
+    or private.has_role(auth.uid(), 'admin'));
 create policy "Owners submit businesses for review" on public.businesses
   for insert to authenticated
   with check (owner_id = auth.uid() and status in ('draft', 'pending'));
@@ -220,8 +231,8 @@ create policy "Owners delete their business records" on public.businesses
   for delete to authenticated using (owner_id = auth.uid());
 create policy "Admins fully manage businesses" on public.businesses
   for all to authenticated
-  using (public.has_role(auth.uid(), 'admin'))
-  with check (public.has_role(auth.uid(), 'admin'));
+  using (private.has_role(auth.uid(), 'admin'))
+  with check (private.has_role(auth.uid(), 'admin'));
 
 create policy "Public sees active services of approved businesses" on public.business_services
   for select to anon
@@ -234,7 +245,7 @@ create policy "Authenticated sees approved and own business services" on public.
       where b.id = business_id and b.status = 'approved'))
     or exists (select 1 from public.businesses b
       where b.id = business_id and b.owner_id = auth.uid())
-    or public.has_role(auth.uid(), 'admin')
+    or private.has_role(auth.uid(), 'admin')
   );
 create policy "Business owners manage their services" on public.business_services
   for all to authenticated
@@ -244,8 +255,8 @@ create policy "Business owners manage their services" on public.business_service
     where b.id = business_id and b.owner_id = auth.uid()));
 create policy "Admins manage all services" on public.business_services
   for all to authenticated
-  using (public.has_role(auth.uid(), 'admin'))
-  with check (public.has_role(auth.uid(), 'admin'));
+  using (private.has_role(auth.uid(), 'admin'))
+  with check (private.has_role(auth.uid(), 'admin'));
 
 create policy "Public sees published jobs for approved businesses" on public.job_posts
   for select to anon, authenticated
@@ -261,15 +272,15 @@ create policy "Owners view and manage their job posts" on public.job_posts
     and status in ('draft', 'pending', 'rejected'));
 create policy "Admins manage all job posts" on public.job_posts
   for all to authenticated
-  using (public.has_role(auth.uid(), 'admin'))
-  with check (public.has_role(auth.uid(), 'admin'));
+  using (private.has_role(auth.uid(), 'admin'))
+  with check (private.has_role(auth.uid(), 'admin'));
 
 create policy "Published community posts are public" on public.community_posts
   for select to anon, authenticated using (status = 'published');
 create policy "Editors and admins manage community posts" on public.community_posts
   for all to authenticated
-  using (public.has_role(auth.uid(), 'admin') or public.has_role(auth.uid(), 'editor'))
-  with check (public.has_role(auth.uid(), 'admin') or public.has_role(auth.uid(), 'editor'));
+  using (private.has_role(auth.uid(), 'admin') or private.has_role(auth.uid(), 'editor'))
+  with check (private.has_role(auth.uid(), 'admin') or private.has_role(auth.uid(), 'editor'));
 
 create policy "Users manage their own favorites" on public.favorites
   for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
@@ -279,15 +290,15 @@ create policy "Public sees visible reviews" on public.reviews
 create policy "Authenticated sees visible and own reviews" on public.reviews
   for select to authenticated
   using (status = 'visible' or user_id = auth.uid()
-    or public.has_role(auth.uid(), 'admin'));
+    or private.has_role(auth.uid(), 'admin'));
 create policy "Authenticated users submit pending reviews" on public.reviews
   for insert to authenticated with check (user_id = auth.uid() and status = 'pending');
 create policy "Users delete their pending reviews" on public.reviews
   for delete to authenticated using (user_id = auth.uid() and status = 'pending');
 create policy "Admins moderate reviews" on public.reviews
   for all to authenticated
-  using (public.has_role(auth.uid(), 'admin'))
-  with check (public.has_role(auth.uid(), 'admin'));
+  using (private.has_role(auth.uid(), 'admin'))
+  with check (private.has_role(auth.uid(), 'admin'));
 
 -- Limpe privilégios padrão antes de conceder somente o necessário.
 revoke all on table public.municipalities from anon, authenticated;
