@@ -1,41 +1,45 @@
-# Configuração do Supabase — Conecta Tapera
+# Supabase configurado — Conecta Tapera
 
-O código de autenticação foi integrado ao frontend. Para ativá-lo, crie e configure um projeto Supabase na sua conta.
+O projeto Supabase existente já foi conectado e a estrutura inicial do banco foi aplicada pelo ChatGPT em **25 de novembro de 2026**.
 
-## 1. Criar o projeto
-1. Acesse https://supabase.com/dashboard e entre na sua conta.
-2. Crie um projeto chamado **Conecta Tapera**.
-3. Guarde com segurança a senha do banco de dados. Ela não é necessária no frontend.
+## Estado atual
+- Projeto Supabase: ativo, região São Paulo (sa-east-1).
+- Banco PostgreSQL: migration inicial aplicada.
+- Tabelas: municípios, perfis, papéis, empresas, serviços, vagas, publicações, favoritos e avaliações.
+- Segurança: RLS ativado nas nove tabelas públicas.
+- O município São José da Tapera–AL já está cadastrado.
+- Cadastro, login, encerramento de sessão e recuperação de senha estão integrados ao frontend.
+- A listagem pública do site consulta empresas aprovadas no banco de dados.
 
-## 2. Criar as tabelas e regras de segurança
-1. No painel do projeto, abra **SQL Editor**.
-2. Abra o arquivo `supabase/migrations/202611250001_initial_schema.sql` deste repositório.
-3. Copie todo o conteúdo, cole no SQL Editor e execute.
-4. A migration cria tabelas para perfis, municípios, empresas, serviços, vagas, notícias/eventos, favoritos e avaliações, além de políticas RLS.
-
-## 3. Configurar a autenticação
-1. Em **Authentication → URL Configuration**, configure a URL local `http://localhost:5173`.
-2. Ao publicar o site, adicione também o domínio oficial em **Site URL** e nas URLs de redirecionamento permitidas.
-3. Em **Authentication → Providers → Email**, mantenha o provedor de e-mail habilitado.
-4. Para produção, configure um provedor SMTP próprio para que as mensagens de confirmação e recuperação cheguem com confiabilidade.
-
-## 4. Conectar o frontend
-1. Abra **Project Settings → API** (ou a área de chaves de API).
-2. Copie a **Project URL** e a chave pública **anon / publishable**.
-3. Na pasta do projeto, copie `.env.example` para um arquivo chamado `.env`.
-4. Preencha `VITE_SUPABASE_URL` com a Project URL e `VITE_SUPABASE_ANON_KEY` com a chave pública.
+## Executar o site no computador
+1. Baixe/clonar o repositório: https://github.com/Clayton20643/-conecta-tapera
+2. Instale Node.js LTS caso ainda não esteja instalado.
+3. Abra a pasta do projeto no terminal.
+4. Copie `.env.example` para um arquivo local chamado `.env`. O arquivo de exemplo já contém a URL e a chave pública corretas.
 5. Execute:
    ```bash
    npm install
    npm run dev
    ```
+6. Abra no navegador o endereço local exibido pelo Vite (normalmente `http://localhost:5173`).
 
-O frontend não precisa da senha do banco nem da chave `service_role`. **Nunca** publique essas credenciais e não as coloque em variáveis `VITE_`.
+No Windows PowerShell, a cópia pode ser feita com:
+```powershell
+Copy-Item .env.example .env
+```
 
-## 5. Criar o primeiro administrador
-Depois que sua própria conta tiver sido criada e confirmada no site:
-1. No Supabase, abra **SQL Editor**.
-2. Substitua o e-mail no comando abaixo pelo e-mail da sua conta e execute:
+## Configuração de e-mail e URLs
+No painel do Supabase:
+1. Acesse Authentication → URL Configuration.
+2. Adicione `http://localhost:5173` à lista de URLs de redirecionamento permitidas.
+3. Confira se o provedor Email está habilitado.
+4. Antes de publicar o site, adicione o domínio de produção à lista de URLs permitidas.
+5. Para uso em produção, configure SMTP próprio para confirmação e recuperação de e-mail.
+
+O projeto ainda não tem domínio público configurado.
+
+## Primeiro administrador
+Novas contas recebem apenas o papel `resident`. Após criar e confirmar sua própria conta, o responsável do projeto pode atribuir o papel `admin` de forma controlada no SQL Editor. Não conceda privilégios administrativos a outras contas.
 
 ```sql
 insert into public.user_roles (user_id, role)
@@ -45,15 +49,15 @@ where email = 'SEU-EMAIL-AQUI'
 on conflict (user_id, role) do nothing;
 ```
 
-O papel `resident` é atribuído automaticamente a novas contas. Não conceda acesso administrativo a terceiros sem autorização.
+## Segurança das chaves
+- O arquivo `.env.example` contém somente a URL e a chave pública `sb_publishable_`, que foi criada para uso em aplicações cliente.
+- O arquivo local `.env` está listado no `.gitignore`.
+- Nunca coloque senha de banco, chave `service_role` ou chave `sb_secret_` no navegador ou no GitHub.
 
-## Recursos desta etapa
-- Cadastro por e-mail e senha (mínimo de 8 caracteres no frontend).
-- Login e encerramento de sessão.
-- Recuperação de senha por e-mail.
-- Criação automática de perfil e papel `resident`.
-- Row Level Security (RLS) para limitar o acesso aos dados.
-- Cadastro de empresa sujeito à aprovação administrativa.
-
-## Importante
-A autenticação só ficará ativa depois que as variáveis `.env` forem configuradas e a migration SQL for executada no seu projeto Supabase. Não há credenciais incluídas neste repositório.
+## O que ainda não foi implementado
+- Formulários para cadastrar e editar empresas, produtos, serviços, vagas e notícias.
+- Painel administrativo completo.
+- Notificações.
+- Upload de imagens.
+- Publicação do site em um domínio.
+- Aplicativo Android.
