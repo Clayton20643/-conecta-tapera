@@ -38,8 +38,8 @@ create table public.user_roles (
 create or replace function public.has_role(_user_id uuid, _role public.app_role)
 returns boolean
 language sql stable security definer
-set search_path = public, pg_temp
-as $$
+set search_path = ''
+as $
   select exists (
     select 1 from public.user_roles
     where user_id = _user_id and role = _role
@@ -51,8 +51,8 @@ grant execute on function public.has_role(uuid, public.app_role) to authenticate
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql security definer
-set search_path = public, pg_temp
-as $$
+set search_path = ''
+as $
 begin
   insert into public.profiles (id, full_name)
   values (new.id, coalesce(new.raw_user_meta_data ->> 'full_name', ''))
@@ -71,8 +71,8 @@ create trigger on_auth_user_created
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
-set search_path = public, pg_temp
-as $$
+set search_path = ''
+as $
 begin
   new.updated_at = now();
   return new;
@@ -289,10 +289,20 @@ create policy "Admins moderate reviews" on public.reviews
   using (public.has_role(auth.uid(), 'admin'))
   with check (public.has_role(auth.uid(), 'admin'));
 
+-- Limpe privilégios padrão antes de conceder somente o necessário.
+revoke all on table public.municipalities from anon, authenticated;
+revoke all on table public.profiles from anon, authenticated;
+revoke all on table public.user_roles from anon, authenticated;
+revoke all on table public.businesses from anon, authenticated;
+revoke all on table public.business_services from anon, authenticated;
+revoke all on table public.job_posts from anon, authenticated;
+revoke all on table public.community_posts from anon, authenticated;
+revoke all on table public.favorites from anon, authenticated;
+revoke all on table public.reviews from anon, authenticated;
+
 grant usage on schema public to anon, authenticated;
 grant select on public.municipalities to anon, authenticated;
 grant insert, update, delete on public.municipalities to authenticated;
-revoke all on public.profiles from anon, authenticated;
 grant select on public.profiles to authenticated;
 grant update (full_name, municipality_id) on public.profiles to authenticated;
 grant select, insert, update, delete on public.user_roles to authenticated;
