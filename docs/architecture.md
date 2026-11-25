@@ -1,30 +1,46 @@
-# Arquitetura e roadmap — Conecta Tapera
+# Arquitetura — Conecta Tapera
 
-## Perfis planejados
-- Visitante: consulta conteúdo público.
-- Morador: perfil, favoritos, avaliações e denúncias.
-- Anunciante/profissional: gerencia o próprio negócio, serviços e vagas.
-- Editor: publica notícias e eventos conforme permissão.
-- Administrador: modera cadastros, usuários e conteúdo.
+## Visão geral
+- Frontend: React + Vite, com layout responsivo.
+- Autenticação: Supabase Auth (e-mail e senha).
+- Dados: PostgreSQL gerenciado pelo Supabase.
+- Autorização: Row Level Security (RLS) no banco.
+- Configuração de frontend: variáveis `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`.
 
-## Domínios de dados
-users, profiles, roles, municipalities, businesses, business_hours, business_media, services, products, job_posts, news, events, public_services, reviews, favorites, reports, notifications e audit_logs.
+## Papéis
+- `resident`: papel automático de toda conta recém-criada.
+- `editor`: pode administrar notícias, eventos e comunicados.
+- `admin`: administra cadastros, perfis, municípios, vagas e moderação.
 
-## Regras de segurança
-- Cada usuário só edita seus próprios recursos, salvo permissão administrativa.
-- Cadastros comerciais passam por moderação antes do selo de verificação.
-- Avaliações e denúncias precisam de controles contra abuso.
-- Não publicar dados pessoais sensíveis.
-- Implementar consentimento, política de privacidade, retenção e exclusão conforme LGPD.
+Os papéis ficam em `public.user_roles`, separados dos metadados editáveis pelo próprio usuário. Atribuições administrativas devem ser feitas por operador autorizado no SQL Editor.
+
+## Tabelas iniciais
+- `municipalities`: municípios e estado.
+- `profiles`: nome público e município associado ao perfil.
+- `user_roles`: permissões controladas.
+- `businesses`: empresas e profissionais, com aprovação.
+- `business_services`: serviços oferecidos por empresas.
+- `job_posts`: oportunidades de trabalho.
+- `community_posts`: notícias, eventos e comunicados.
+- `favorites`: estabelecimentos favoritos.
+- `reviews`: avaliações com moderação.
+
+## Regras fundamentais
+- Visitantes consultam somente estabelecimentos aprovados, serviços ativos de estabelecimentos aprovados, publicações publicadas e avaliações visíveis.
+- Proprietários administram somente os próprios cadastros e não conseguem aprovar a própria empresa ou vaga.
+- Editores e administradores podem publicar conteúdo comunitário.
+- Administradores fazem a moderação e controlam papéis.
+- Perfis só podem editar nome e município; não podem atribuir papéis a si mesmos.
+- Cada tabela exposta tem RLS habilitado e permissões SQL restritas.
 
 ## Roadmap
-1. Fundação visual responsiva.
-2. Backend, PostgreSQL e migrações.
-3. Autenticação, recuperação de senha e controle de acesso.
-4. CRUD real de empresas, serviços, produtos, vagas, notícias e eventos.
-5. Painel administrativo e fila de moderação.
-6. Busca geográfica, notificações, avaliações e relatórios.
-7. Testes, acessibilidade, segurança, deploy e preparação do app Android.
+1. Fundação visual e autenticação — implementadas no código.
+2. Esquema inicial PostgreSQL/RLS — migration preparada; precisa ser executada no projeto Supabase.
+3. Formulários CRUD para empresas, serviços, vagas, notícias e eventos.
+4. Painel administrativo com fila de aprovação.
+5. Favoritos e avaliações conectados ao banco.
+6. Busca geográfica, notificações, testes de segurança e acessibilidade.
+7. Deploy web e preparação do aplicativo Android.
 
-## Limitação atual
-A primeira versão usa dados demonstrativos locais. Ainda não possui login real, API, banco de dados, painel administrativo funcional nem app Android. Não inserir dados reais de cidadãos até implantar segurança e privacidade.
+## Limites da versão
+A autenticação e consultas Supabase só funcionam depois de configurar o projeto e as variáveis de ambiente. Os cadastros, serviços, vagas e publicações ainda não têm telas completas de gerenciamento. O painel de administração e o app Android não foram implementados.
